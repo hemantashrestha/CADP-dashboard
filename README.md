@@ -6,7 +6,7 @@ Supervisor: Amir Masoud Rahmani.
 CADP turns a synthetic marketing dataset (Kaggle, 200,000 campaigns, 16 fields) into a PostgreSQL star schema and a live Streamlit dashboard for account and agency managers.
 
 - **Live dashboard:** https://cadp-dashboard-mcf3e999isscxkbkesiw8p.streamlit.app/
-- **Current version:** 2.0.1 (see [CHANGELOG.md](CHANGELOG.md))
+- **Current version:** 2.0.2 (see [CHANGELOG.md](CHANGELOG.md))
 
 ## What the dashboard shows
 
