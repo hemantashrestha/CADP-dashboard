@@ -1,4 +1,4 @@
-"""CADP: Campaign Analytics Dashboard (Streamlit). Version 2.0.1 (see CHANGELOG.md).
+"""CADP: Campaign Analytics Dashboard (Streamlit). Version 2.0.2 (see CHANGELOG.md).
 
 Views: Campaign Overview, Channel Performance, Cost and ROI, Conversion Funnel,
 Data Quality and Diagnostic Analysis (FR6, FR10). Sidebar filters apply to every
@@ -15,7 +15,7 @@ import streamlit as st
 from scipy import stats
 from sqlalchemy import bindparam, create_engine, text
 
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.0.2"
 st.set_page_config(page_title="CADP Campaign Analytics", layout="wide")
 
 FACT = "fact_campaign_performance"
@@ -199,6 +199,19 @@ def money(v):
     return f"${v:,.0f}" if pd.notna(v) else "n/a"
 
 
+def summary_table(df, group):
+    """Readable KPI table: plain-English headings, formatted numbers, six columns."""
+    return pd.DataFrame({
+        LABELS.get(group, group): df[group],
+        "Campaigns": df["campaigns"].map("{:,.0f}".format),
+        "Clicks": df["clicks"].map("{:,.0f}".format),
+        "Spend": df["spend"].map(money),
+        "Conv. rate": df["avg_conversion_rate"].map("{:.2%}".format),
+        "Avg ROI": df["avg_roi"].map("{:.2f}".format),
+        "Cost per conv.": df["cost_per_conversion"].map("${:,.2f}".format),
+    })
+
+
 # ---------------------------------------------------------------- drill-down (FR8)
 KPI_SORT = {"Clicks": "clicks", "Conversion rate": "cr", "ROI": "roi", "Acquisition cost": "cost"}
 
@@ -278,7 +291,7 @@ if view == VIEWS[1]:
                    .update_yaxes(tickformat=".2%"), width="stretch")
     c.plotly_chart(px.bar(ch, x="channel", y="avg_roi", title="Avg ROI by channel",
                           labels={"channel": "", "avg_roi": "ROI"}), width="stretch")
-    st.dataframe(ch.rename(columns={"channel": "Channel"}), width="stretch", hide_index=True)
+    st.dataframe(summary_table(ch, "channel"), width="stretch", hide_index=True)
     drill("channel", "channel", ch["channel"].tolist())
 
 # 3. Cost and ROI
@@ -318,8 +331,9 @@ if view == VIEWS[3]:
         funnel = pd.DataFrame({"Stage": ["Impressions", "Clicks", "Est. conversions"],
                                "Count": [r["impressions"], r["clicks"], r["est_conversions"]]})
         a, b = st.columns([3, 2])
-        a.plotly_chart(px.funnel(funnel, x="Count", y="Stage", title="Impressions to estimated conversions"),
-                       width="stretch")
+        funnel["Label"] = funnel["Count"].map(lambda v: f"{v / 1e9:.2f} billion" if v >= 1e9 else f"{v / 1e6:.1f} million")
+        a.plotly_chart(px.funnel(funnel, x="Count", y="Stage", text="Label", title="Impressions to estimated conversions")
+                       .update_traces(texttemplate="%{text}", textposition="outside"), width="stretch")
         b.metric("Click-through rate", f"{r['ctr']:.2%}")
         b.metric("Click to conversion", f"{r['est_conversions'] / r['clicks']:.2%}")
         b.metric("Impression to conversion", f"{r['est_conversions'] / r['impressions']:.3%}")
