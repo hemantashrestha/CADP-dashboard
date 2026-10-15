@@ -2,6 +2,21 @@
 
 Versions follow MAJOR.MINOR.PATCH. The version number is also shown at the bottom of the dashboard.
 
+## [2.0.1] - 2026-10-15
+
+### Changed
+- Faster first load (NFR1). The live v2.0.0 took 15.8 s of database time on first load. In local testing, v2.0.1 needs 0.7 to 2.1 s per view, down from 4.1 s for the whole v2.0.0 page.
+  - A view selector replaces the tabs, so only the view on screen queries the database.
+  - Diagnostic Analysis computes the ANOVA from per-group counts, means and variances returned by one GROUPING SETS query. It no longer downloads 200,000 rows. Results are identical to v2.0.0.
+  - Data Quality runs one combined query instead of seven.
+  - Filter lists read the small dimension tables instead of the full join.
+  - The time-period filter is only applied when the range is narrowed.
+- Cost and ROI: the random 3,000-row scatter plot is replaced by average ROI across ten cost bands, plus a correlation calculated over all campaigns.
+- The conversion rate axis shows two decimal places (8.01% instead of 8.0%).
+
+### Removed
+- The all-attributes linear model in Diagnostic Analysis, because it needed all 200,000 rows in the app. The per-attribute ANOVA, which also reports p-values, covers FR10.
+
 ## [2.0.0] - 2026-10-15
 
 ### Added
