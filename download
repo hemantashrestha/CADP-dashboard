@@ -1,0 +1,8 @@
+# Never commit database passwords
+.streamlit/secrets.toml
+.env
+
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+cadp_test_results.csv
