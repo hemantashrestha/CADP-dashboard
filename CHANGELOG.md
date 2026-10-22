@@ -2,6 +2,20 @@ Changelog
 
 Versions follow MAJOR.MINOR.PATCH. The version number is also shown at the bottom of the dashboard.
 
+[2.2.0] - 2026-10-22
+The supervisor's feedback for the main page now applies to all five detail views.
+Changed
+Campaign Overview, Channel Performance, Cost and ROI, Conversion Funnel and Data Quality each open with a heading that states the finding, worked out from the live data (for example "All 6 channels are about the same on conversion rate").
+Each view ends with a "So what?" note that says what a manager should do, and the note changes with the filters.
+Fixed colours for every attribute, not just channels: companies, campaign types and customer segments keep the same colour in every chart.
+Horizontal bars with values printed on them replace plain single-colour bars.
+Campaign Overview: KPI tiles with borders and monthly trend lines; monthly charts show the average and a ±1% "normal variation" band.
+Cost and ROI: spend share as a donut; ROI by cost band as a line starting at zero, with the normal variation band.
+Conversion Funnel: shaded funnel stages and a plain-words heading ("out of every 1,000 impressions...").
+Data Quality: each check is a tile marked Pass or Fail; reconciliation totals as tiles; the three actions for bad data (fix, keep and flag, reject) shown as cards above the rule table.
+Fixed
+The app no longer stops if pipeline/data_rules.py is missing (2.1.0 hotfix).
+
 [2.1.0] - 2026-10-22
 Changes made after the supervisor meeting of 21 October 2026. The dashboard is for senior managers, so it must be simple, look good, tell a story and end with recommendations.
 Added

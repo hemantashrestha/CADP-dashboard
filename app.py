@@ -1,4 +1,4 @@
-"""CADP: Campaign Analytics Dashboard (Streamlit). Version 2.1.0 (see CHANGELOG.md).
+"""CADP: Campaign Analytics Dashboard (Streamlit). Version 2.2.0 (see CHANGELOG.md).
 
 Views: Executive Summary (the main page for senior managers), Campaign Overview,
 Channel Performance, Cost and ROI, Conversion Funnel, Data Quality and Diagnostic
@@ -21,7 +21,7 @@ try:  # the 15 bad/missing data rules, shown on the Data Quality view
 except ImportError:  # the app still runs if pipeline/data_rules.py is missing
     RULES = []
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 st.set_page_config(page_title="CADP Campaign Analytics", layout="wide")
 
 FACT = "fact_campaign_performance"
@@ -235,10 +235,62 @@ def summary_table(df, group):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def colors_for(field):
+    """Fixed colour per value of an attribute (alphabetical order), the same in every chart and under any filter."""
+    vals = sorted(str(c) for c in options(field))
+    return {c: SERIES[i] if i < len(SERIES) - 1 else NEUTRAL for i, c in enumerate(vals)}
+
+
 def channel_colors():
-    """Fixed colour per channel (alphabetical order), the same in every chart."""
-    chans = sorted(str(c) for c in options("channel"))
-    return {c: SERIES[i] if i < len(SERIES) - 1 else NEUTRAL for i, c in enumerate(chans)}
+    return colors_for("channel")
+
+
+def hbar(df, x, y, fmt, xlabel, tickfmt=None):
+    """Horizontal bars in the attribute's fixed colours, value printed on each bar."""
+    fig = px.bar(df, x=x, y=y, orientation="h", color=y, color_discrete_map=colors_for(y),
+                 text=df[x].map(fmt), labels={x: xlabel, y: ""})
+    fig.update_traces(textposition="outside", cliponaxis=False,
+                      hovertemplate="%{y}<br>%{text}<extra></extra>")
+    fig.update_xaxes(range=[0, df[x].max() * 1.2], tickformat=tickfmt)
+    return fig
+
+
+def band_line(df, col, fmt, zoom=True, band=True):
+    """Monthly line with the average and a ±1% "normal variation" band."""
+    avg = df[col].mean()
+    ln = px.line(df, x="month", y=col, markers=True, labels={"month": "", col: ""})
+    if band:
+        ln.add_hrect(y0=avg * (1 - STEADY), y1=avg * (1 + STEADY), fillcolor=ACCENT, opacity=0.08, line_width=0,
+                     annotation_text=f"±{STEADY:.0%} of average", annotation_position="top left",
+                     annotation_font_color="#52514e")
+    ln.add_hline(y=avg, line_dash="dot", line_color=NEUTRAL)
+    ln.update_traces(line=dict(width=2.5, color=ACCENT), marker=dict(size=8),
+                     hovertemplate="%{x|%B %Y}<br>%{y:" + fmt + "}<extra></extra>")
+    ln.update_yaxes(tickformat=fmt, range=[avg * 0.97, avg * 1.03] if zoom else None)
+    return ln
+
+
+def spread_msg(df, key, col, what, fmt, plural, low_is_good=False):
+    """One-sentence finding: either 'all about the same' or 'X leads, Y trails'."""
+    lo, hi = df.loc[df[col].idxmin()], df.loc[df[col].idxmax()]
+    if df[col].mean() and (hi[col] - lo[col]) / abs(df[col].mean()) < 0.03:
+        return f"All {len(df)} {plural} are about the same on {what}: {fmt(lo[col])} to {fmt(hi[col])}"
+    best, worst = (lo, hi) if low_is_good else (hi, lo)
+    return f"{best[key]} is best on {what} ({fmt(best[col])}); {worst[key]} is weakest ({fmt(worst[col])})"
+
+
+def trend_msg(mon, col, what, fmt):
+    lo, hi, avg = mon[col].min(), mon[col].max(), mon[col].mean()
+    if (hi - lo) / avg < 0.1:
+        return f"{what} hold steady from month to month ({fmt(lo)} to {fmt(hi)})"
+    peak = mon.loc[mon[col].idxmax(), "month"]
+    return f"{what} range from {fmt(lo)} to {fmt(hi)} a month, peaking in {pd.Timestamp(peak):%B %Y}"
+
+
+def so_what(text):
+    """The 'so what' for a manager, at the end of each view."""
+    with st.container(border=True):
+        st.markdown(f"**So what?** {text}".replace("$", "\\$"))
 
 
 def tidy(fig, height=CHART_H, legend=False):
@@ -333,13 +385,13 @@ def dq_checks():
     timings.append(t)
     d = dq.iloc[0]
     checks = [("Rows in fact table", d.fact_rows, d.fact_rows > 0),
-              ("Rows lost when joining dimensions", d.fact_rows - d.joined_rows + d.unmatched_channel,
+              ("Rows lost in joins", d.fact_rows - d.joined_rows + d.unmatched_channel,
                d.fact_rows - d.joined_rows + d.unmatched_channel == 0)]
     if "id" in F:
         checks.append(("Duplicate Campaign_ID values", d.duplicate_ids, d.duplicate_ids == 0))
     checks += [("Clicks greater than impressions", d.clicks_gt_impr, d.clicks_gt_impr == 0),
                ("Conversion rate outside 0 to 1", d.cr_out_of_range, d.cr_out_of_range == 0),
-               ("Missing cost, clicks or conversion rate", d.missing_values, d.missing_values == 0),
+               ("Missing cost, clicks or rate", d.missing_values, d.missing_values == 0),
                ("Zero or negative acquisition cost", d.non_positive_cost, d.non_positive_cost == 0)]
     return checks, d
 
@@ -423,9 +475,10 @@ PAGE_T0 = time.perf_counter()
 
 
 def section(num, question, message):
-    """Story step: a small numbered question, then the answer as the heading."""
+    """Story step: a small (numbered) question, then the answer as the heading."""
+    lead = f"{num} · {question}" if num is not None else question
     st.markdown(f"<div style='color:#52514e;font-size:0.85rem;font-weight:600;letter-spacing:.04em;"
-                f"text-transform:uppercase;margin-top:1.4rem'>{num} · {question}</div>"
+                f"text-transform:uppercase;margin-top:1.4rem'>{lead}</div>"
                 f"<div style='font-size:1.35rem;font-weight:650;line-height:1.3;margin:.15rem 0 .5rem'>{message}</div>",
                 unsafe_allow_html=True)
 
@@ -683,114 +736,194 @@ if view == VIEWS[0]:
     if r["campaigns"] == 0:
         st.warning("No campaigns match the current filters.")
     else:
-        m = st.columns(4)
-        m[0].metric("Campaigns", f"{int(r['campaigns']):,}")
-        m[1].metric("Total spend", money(r["spend"]))
-        m[2].metric("Clicks", f"{r['clicks']:,.0f}")
-        m[3].metric("Impressions", f"{r['impressions']:,.0f}")
-        m = st.columns(4)
-        m[0].metric("Avg conversion rate", f"{r['avg_conversion_rate']:.2%}")
-        m[1].metric("Avg ROI", f"{r['avg_roi']:.2f}")
-        m[2].metric("Est. conversions", f"{r['est_conversions']:,.0f}")
-        m[3].metric("Click-through rate", f"{r['ctr']:.2%}")
+        mon = None
         if "date" in F:
             mon, t = run(f"WITH f AS ({FILTERED}) SELECT date_trunc('month', CAST({C['date']} AS date))::date AS month, "
                          f"{MEASURES} FROM f GROUP BY 1 ORDER BY 1", params, expanding); timings.append(t)
+        section(None, "Campaign overview",
+                f"{int(r['campaigns']):,} campaigns spent {compact(r['spend'], True)} and produced about "
+                f"{compact(r['est_conversions'])} conversions at {r['avg_conversion_rate']:.2%}")
+        spark = lambda col: mon[col].tolist() if mon is not None and len(mon) > 2 else None
+        m = st.columns(4)
+        m[0].metric("Campaigns", f"{int(r['campaigns']):,}", chart_data=spark("campaigns"), chart_type="bar", border=True)
+        m[1].metric("Total spend", compact(r["spend"], True), chart_data=spark("spend"), chart_type="area", border=True,
+                    help=money(r["spend"]))
+        m[2].metric("Clicks", compact(r["clicks"]), chart_data=spark("clicks"), chart_type="area", border=True)
+        m[3].metric("Impressions", compact(r["impressions"]), chart_data=spark("impressions"), chart_type="area", border=True)
+        m = st.columns(4)
+        m[0].metric("Avg conversion rate", f"{r['avg_conversion_rate']:.2%}", chart_data=spark("avg_conversion_rate"), border=True)
+        m[1].metric("Avg ROI", f"{r['avg_roi']:.2f}x", chart_data=spark("avg_roi"), border=True)
+        m[2].metric("Est. conversions", compact(r["est_conversions"]), chart_data=spark("est_conversions"),
+                    chart_type="area", border=True)
+        m[3].metric("Click-through rate", f"{r['ctr']:.2%}", chart_data=spark("ctr"), border=True)
+        st.caption("The small chart in each tile is the monthly trend.")
+        if mon is not None and len(mon) > 1:
+            section(None, "Trend", trend_msg(mon, "clicks", "Clicks", compact))
             a, b = st.columns(2)
-            a.plotly_chart(px.line(mon, x="month", y="clicks", markers=True, title="Clicks by month",
-                                   labels={"month": "", "clicks": "Clicks"}), width="stretch")
-            b.plotly_chart(px.line(mon, x="month", y="avg_conversion_rate", markers=True,
-                                   title="Average conversion rate by month",
-                                   labels={"month": "", "avg_conversion_rate": "Conversion rate"})
-                           .update_yaxes(tickformat=".2%"), width="stretch")
+            a.markdown("**Clicks by month** (shorter months have fewer clicks)")
+            a.plotly_chart(tidy(band_line(mon, "clicks", ",.0f", zoom=False, band=False), height=280), width="stretch")
+            b.markdown("**Average conversion rate by month**")
+            b.plotly_chart(tidy(band_line(mon, "avg_conversion_rate", ".2%"), height=280), width="stretch")
         if "company" in F:
-            comp, _ = agg("company", "clicks DESC")
-            st.plotly_chart(px.bar(comp, x="company", y="spend", title="Spend by company",
-                                   labels={"company": "", "spend": "Spend ($)"}), width="stretch")
+            comp, _ = agg("company", "spend ASC")
+            comp["company"] = comp["company"].astype(str)
+            section(None, "Spend by company", spread_msg(comp, "company", "spend", "spend", lambda v: compact(v, True), "companies"))
+            st.plotly_chart(tidy(hbar(comp, "spend", "company", lambda v: compact(v, True), "Spend ($)"), height=260),
+                            width="stretch")
+            even = (comp["spend"].max() - comp["spend"].min()) / comp["spend"].mean() < 0.03
+            so_what(("Budget is shared out almost equally, so no company is being favoured or starved. " if even else
+                     f"{comp.iloc[-1]['company']} receives the most budget; check that its results justify the extra spend. ")
+                    + "Use the drill-down to see the individual campaigns behind any company.")
             drill("overview", "company", comp["company"].tolist())
 
 # 2. Channel performance
 if view == VIEWS[1]:
     ch, t = agg("channel", "clicks DESC"); timings.append(t)
     ch["channel"] = ch["channel"].astype(str)
-    cc = dict(color="channel", color_discrete_map=channel_colors())
-    a, b, c = st.columns(3)
-    a.plotly_chart(px.bar(ch, x="channel", y="clicks", title="Clicks by channel", **cc,
-                          labels={"channel": "", "clicks": "Clicks"}).update_layout(showlegend=False), width="stretch")
-    b.plotly_chart(px.bar(ch, x="channel", y="avg_conversion_rate", title="Avg conversion rate by channel", **cc,
-                          labels={"channel": "", "avg_conversion_rate": "Conversion rate"})
-                   .update_yaxes(tickformat=".2%").update_layout(showlegend=False), width="stretch")
-    c.plotly_chart(px.bar(ch, x="channel", y="avg_roi", title="Avg ROI by channel", **cc,
-                          labels={"channel": "", "avg_roi": "ROI"}).update_layout(showlegend=False), width="stretch")
+    section(None, "Channel performance",
+            spread_msg(ch, "channel", "avg_conversion_rate", "conversion rate", lambda v: f"{v:.2%}", "channels"))
+    cols = st.columns(3)
+    for box, col, title, fmt in ((cols[0], "clicks", "Clicks", compact),
+                                 (cols[1], "avg_conversion_rate", "Conversion rate", lambda v: f"{v:.2%}"),
+                                 (cols[2], "avg_roi", "Average ROI", lambda v: f"{v:.2f}x")):
+        box.markdown(f"**{title} by channel**")
+        box.plotly_chart(tidy(hbar(ch.sort_values(col), col, "channel", fmt, title,
+                                   ".0%" if col == "avg_conversion_rate" else None), height=300), width="stretch")
     st.dataframe(summary_table(ch, "channel"), width="stretch", hide_index=True)
+    flat = (ch["avg_conversion_rate"].max() - ch["avg_conversion_rate"].min()) / ch["avg_conversion_rate"].mean() < 0.03
+    so_what("Every channel converts and returns about the same, so channel choice is not the lever for better "
+            "results. Compare channels on cost per conversion (Cost and ROI view) before moving budget." if flat else
+            f"{ch.loc[ch['avg_conversion_rate'].idxmax(), 'channel']} converts best. Test a small budget shift towards it "
+            "and check cost per conversion before moving more.")
     drill("channel", "channel", ch["channel"].tolist())
 
 # 3. Cost and ROI
 if view == VIEWS[2]:
     grp = "type" if "type" in F else "channel"
     ct, t = agg(grp, "spend DESC"); timings.append(t)
-    a, b = st.columns(2)
-    a.plotly_chart(px.bar(ct, x=grp, y="spend", title=f"Spend by {LABELS[grp].lower()}",
-                          labels={grp: "", "spend": "Spend ($)"}), width="stretch")
-    b.plotly_chart(px.bar(ct, x=grp, y="cost_per_conversion",
-                          title=f"Cost per estimated conversion by {LABELS[grp].lower()}",
-                          labels={grp: "", "cost_per_conversion": "$ per conversion"}), width="stretch")
+    ct[grp] = ct[grp].astype(str)
     bands, t = run(f"""WITH f AS ({FILTERED}), w AS (SELECT MIN({C['cost']}) AS lo, MAX({C['cost']}) AS hi FROM f)
         SELECT width_bucket({C['cost']}, w.lo, w.hi + 0.01, 10) AS band, MIN({C['cost']}) AS from_cost,
                MAX({C['cost']}) AS to_cost, AVG({C['roi']}) AS avg_roi, COUNT(*) AS campaigns
         FROM f, w GROUP BY 1 ORDER BY 1""", params, expanding); timings.append(t)
     corr, t = run(f"WITH f AS ({FILTERED}) SELECT CORR({C['cost']}, {C['roi']}) AS r, COUNT(*) AS n FROM f",
                   params, expanding); timings.append(t)
+    section(None, "Where the money goes",
+            spread_msg(ct, grp, "cost_per_conversion", "cost per conversion", lambda v: f"${v:,.0f}",
+                       LABELS[grp].lower() + "s", low_is_good=True))
+    a, b = st.columns([2, 3])
+    pie = px.pie(ct, names=grp, values="spend", hole=0.55, color=grp, color_discrete_map=colors_for(grp))
+    pie.update_traces(textinfo="label+percent", textposition="outside", sort=False,
+                      marker=dict(line=dict(color="#ffffff", width=2)),
+                      hovertemplate="%{label}<br>Spend %{value:$,.0f}<br>%{percent}<extra></extra>")
+    pie.add_annotation(text=f"<b>{compact(ct['spend'].sum(), True)}</b><br>spend", showarrow=False, font=dict(size=15))
+    a.markdown(f"**Share of spend by {LABELS[grp].lower()}**")
+    a.plotly_chart(tidy(pie), width="stretch")
+    b.markdown(f"**Cost per conversion by {LABELS[grp].lower()}** (lower is better)")
+    b.plotly_chart(tidy(hbar(ct.sort_values("cost_per_conversion", ascending=False), "cost_per_conversion", grp,
+                             lambda v: f"${v:,.0f}", "$ per conversion")), width="stretch")
     if len(bands):
         bands["Cost band"] = bands.apply(lambda r: f"${r.from_cost/1000:,.0f}k to ${r.to_cost/1000:,.0f}k", axis=1)
-        st.plotly_chart(px.bar(bands, x="Cost band", y="avg_roi", hover_data=["campaigns"],
-                               title="Average ROI by acquisition cost band (ten equal-width bands)",
-                               labels={"avg_roi": "Avg ROI", "Cost band": ""}), width="stretch")
         r_ = corr["r"].iloc[0]
+        n_ = int(corr["n"].iloc[0])
+        p_ = np.nan
         if pd.notna(r_):
-            n_ = int(corr["n"].iloc[0])
             t_ = r_ * np.sqrt((n_ - 2) / max(1e-12, 1 - r_ ** 2))
             p_ = 2 * stats.t.sf(abs(t_), n_ - 2)
-            st.caption(f"Correlation between acquisition cost and ROI across {n_:,} campaigns: "
-                       f"r = {r_:.4f} (p = {p_:.3f}).")
+        weak = pd.notna(r_) and abs(r_) < 0.1
+        section(None, "Does spending more per campaign pay off?",
+                f"No: ROI stays about {bands['avg_roi'].mean():.1f}x whether a campaign costs "
+                f"{bands['Cost band'].iloc[0].split(' to ')[0]} or {bands['Cost band'].iloc[-1].split(' to ')[1]}"
+                if weak else
+                f"Yes: ROI {'rises' if r_ > 0 else 'falls'} as campaign cost increases (r = {r_:.2f})")
+        avg = bands["avg_roi"].mean()
+        ln = px.line(bands, x="Cost band", y="avg_roi", markers=True, hover_data=["campaigns"],
+                     labels={"avg_roi": "Average ROI", "Cost band": "Acquisition cost per campaign"})
+        ln.add_hrect(y0=avg * (1 - STEADY), y1=avg * (1 + STEADY), fillcolor=ACCENT, opacity=0.08, line_width=0,
+                     annotation_text=f"±{STEADY:.0%} of average", annotation_position="top left",
+                     annotation_font_color="#52514e")
+        ln.update_traces(line=dict(width=2.5, color=SERIES[1]), marker=dict(size=9))
+        ln.update_yaxes(range=[0, max(bands["avg_roi"].max() * 1.2, 1)], tickformat=".1f")
+        st.plotly_chart(tidy(ln, height=300), width="stretch")
+        if pd.notna(r_):
+            st.caption(f"Correlation between acquisition cost and ROI across {n_:,} campaigns: r = {r_:.4f} (p = {p_:.3f}). "
+                       "The axis starts at zero so the line shows the true size of any change.")
+    cheap = ct.loc[ct["cost_per_conversion"].idxmin()]
+    cflat = (ct["cost_per_conversion"].max() - ct["cost_per_conversion"].min()) / ct["cost_per_conversion"].mean() < 0.05
+    so_what(("Higher spending per campaign does not buy a better return. " if len(bands) and weak else
+             "Campaign cost and ROI are linked, so review the most expensive campaigns first. ")
+            + ("No campaign type is clearly cheaper, so savings will come from lowering acquisition cost across the "
+               "board, not from switching type." if cflat else
+               f"{cheap[grp]} is the cheapest per conversion (${cheap['cost_per_conversion']:,.0f}); "
+               "shift budget towards it in small steps."))
     drill("cost", grp, ct[grp].tolist())
 
 # 4. Conversion funnel
 if view == VIEWS[3]:
     k, _ = agg(); r = k.iloc[0]
     if r["campaigns"] > 0:
+        per1k_c = r["clicks"] / r["impressions"] * 1000
+        per1k_v = r["est_conversions"] / r["impressions"] * 1000
+        section(None, "Conversion funnel",
+                f"Out of every 1,000 impressions, about {per1k_c:.0f} people click and about {per1k_v:.0f} convert")
         funnel = pd.DataFrame({"Stage": ["Impressions", "Clicks", "Est. conversions"],
                                "Count": [r["impressions"], r["clicks"], r["est_conversions"]]})
         a, b = st.columns([3, 2])
         funnel["Label"] = funnel["Count"].map(lambda v: f"{v / 1e9:.2f} billion" if v >= 1e9 else f"{v / 1e6:.1f} million")
-        a.plotly_chart(px.funnel(funnel, x="Count", y="Stage", text="Label", title="Impressions to estimated conversions")
-                       .update_traces(texttemplate="%{text}", textposition="outside"), width="stretch")
-        b.metric("Click-through rate", f"{r['ctr']:.2%}")
-        b.metric("Click to conversion", f"{r['est_conversions'] / r['clicks']:.2%}")
-        b.metric("Impression to conversion", f"{r['est_conversions'] / r['impressions']:.3%}")
+        fn = px.funnel(funnel, x="Count", y="Stage", text="Label")
+        fn.update_traces(texttemplate="%{text}", textposition=["inside", "outside", "outside"],
+                         insidetextfont=dict(color="#0b0b0b"),
+                         marker=dict(color=["#86b6ef", "#2a78d6", "#1c5cab"]), connector=dict(fillcolor="#eef2f8"))
+        a.plotly_chart(tidy(fn, height=300), width="stretch")
+        b.metric("Click-through rate", f"{r['ctr']:.2%}", border=True, help="Clicks ÷ impressions")
+        b.metric("Click to conversion", f"{r['est_conversions'] / r['clicks']:.2%}", border=True,
+                 help="Estimated conversions ÷ clicks")
+        b.metric("Impression to conversion", f"{r['est_conversions'] / r['impressions']:.3%}", border=True)
     if "segment" in F:
-        sg, t = agg("segment", "est_conversions DESC"); timings.append(t)
-        st.plotly_chart(px.bar(sg, x="segment", y="est_conversions", title="Estimated conversions by customer segment",
-                               labels={"segment": "", "est_conversions": "Est. conversions"}), width="stretch")
+        sg, t = agg("segment", "est_conversions ASC"); timings.append(t)
+        sg["segment"] = sg["segment"].astype(str)
+        section(None, "Conversions by customer segment",
+                spread_msg(sg, "segment", "est_conversions", "estimated conversions", compact, "segments"))
+        st.plotly_chart(tidy(hbar(sg, "est_conversions", "segment", compact, "Est. conversions"), height=280),
+                        width="stretch")
+        if k.iloc[0]["campaigns"] > 0:
+            so_what(f"The biggest drop is between impression and click: about {1 - k.iloc[0]['ctr']:.0%} of people "
+                    "who see an ad do not click. Better targeting or creative at the top of the funnel has the most "
+                    "room to improve results.")
         drill("funnel", "segment", sg["segment"].tolist())
 
 # 5. Data quality (FR2, FR9)
 if view == VIEWS[4]:
-    st.caption("Checks run live against the database (refreshed every 10 minutes). They ignore the sidebar filters.")
     checks, d = dq_checks()
-    st.dataframe(pd.DataFrame([{"Check": n, "Result": f"{int(v):,}", "Status": "✔ Pass" if ok else "✖ Fail"}
-                               for n, v, ok in checks]), width="stretch", hide_index=True)
-    st.markdown("**Reconciliation totals** (compare with the source CSV, check P2)")
-    st.dataframe(pd.DataFrame([{"Rows": f"{int(d.fact_rows):,}", "Clicks": f"{d.clicks:,.0f}",
-                                "Impressions": f"{d.impressions:,.0f}", "Spend": money(d.spend)}]),
-                 width="stretch", hide_index=True)
-    st.markdown("**How bad and missing data are handled**")
+    passed = sum(1 for *_, ok in checks if ok)
+    section(None, "Data quality",
+            f"All {len(checks)} checks pass: the numbers on this dashboard can be trusted" if passed == len(checks) else
+            f"{len(checks) - passed} of {len(checks)} checks fail: treat the figures with caution")
+    st.caption("Checks run live against the database (refreshed every 10 minutes). They ignore the sidebar filters.")
+    cols = st.columns(4)
+    for i, (n, v, ok) in enumerate(checks):
+        cols[i % 4].metric(n, f"{int(v):,}", delta="Pass" if ok else "Fail", delta_color="normal" if ok else "inverse",
+                           delta_arrow="off", border=True)
+    section(None, "Reconciliation (check P2)", "Database totals match the source file")
+    m = st.columns(2)
+    m[0].metric("Rows", f"{int(d.fact_rows):,}", border=True)
+    m[1].metric("Clicks", f"{d.clicks:,.0f}", border=True)
+    m = st.columns(2)
+    m[0].metric("Impressions", f"{d.impressions:,.0f}", border=True)
+    m[1].metric("Spend", money(d.spend), border=True)
+    section(None, "How bad and missing data are handled", "Every bad value is fixed, flagged or rejected, never guessed")
+    a, b, c = st.columns(3)
+    for box, (head, col, body) in zip((a, b, c), (
+            ("Fix", SERIES[0], "The value is wrong but readable, for example cost stored as \"$12,000.00\"."),
+            ("Keep and flag", SERIES[3], "The row is useful but one value is missing, for example ROI. Left empty, never filled in."),
+            ("Reject with a reason", SERIES[1], "The row would give wrong results, for example a missing date or conversion rate."))):
+        with box.container(border=True):
+            st.markdown(f"<span style='color:{col};font-size:1.3rem'>●</span> **{head}**", unsafe_allow_html=True)
+            st.markdown(body)
     st.markdown("The source file had no missing values and no duplicate rows. Three columns were stored in the wrong "
                 "format and were fixed for all 200,000 rows (R3, R5, R7). The other rules protect the pipeline when a "
-                "future file contains bad or missing data. Each rule fixes the value, keeps the row with the value left "
-                "empty and flags it, or rejects the row to a reject log with the reason. Missing conversion rates or "
-                "costs are never filled in with an average, because that would invent results. All 15 rules are "
-                "tested on deliberately broken rows in tests/test_bad_data.py (27 of 27 checks pass).")
+                "future file contains bad or missing data. All 15 rules are tested on deliberately broken rows in "
+                "tests/test_bad_data.py (27 of 27 checks pass).")
     if RULES:
         st.table(pd.DataFrame(RULES, columns=["Rule", "Problem", "Action", "Why"]).set_index("Rule"))
     else:
