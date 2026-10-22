@@ -16,7 +16,10 @@ import streamlit as st
 from scipy import stats
 from sqlalchemy import bindparam, create_engine, text
 
-from pipeline.data_rules import RULES
+try:  # the 15 bad/missing data rules, shown on the Data Quality view
+    from pipeline.data_rules import RULES
+except ImportError:  # the app still runs if pipeline/data_rules.py is missing
+    RULES = []
 
 APP_VERSION = "2.1.0"
 st.set_page_config(page_title="CADP Campaign Analytics", layout="wide")
@@ -788,7 +791,10 @@ if view == VIEWS[4]:
                 "empty and flags it, or rejects the row to a reject log with the reason. Missing conversion rates or "
                 "costs are never filled in with an average, because that would invent results. All 15 rules are "
                 "tested on deliberately broken rows in tests/test_bad_data.py (27 of 27 checks pass).")
-    st.table(pd.DataFrame(RULES, columns=["Rule", "Problem", "Action", "Why"]).set_index("Rule"))
+    if RULES:
+        st.table(pd.DataFrame(RULES, columns=["Rule", "Problem", "Action", "Why"]).set_index("Rule"))
+    else:
+        st.info("The rules table needs pipeline/data_rules.py in the repository.")
 
 # 6. Diagnostic analysis (FR10)
 # One-way ANOVA is computed from per-group count, mean and variance, which the
